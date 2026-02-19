@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-core-sdk"
+version = "0.1.0"
+description = "Shared observability, LLM client, RAG infrastructure, and base tools for LLM agents"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+readme = "README.md"
+
+# Minimal core dependencies (tracing + LLM client only)
+dependencies = [
+    "opentelemetry-api>=1.24.0",
+    "opentelemetry-sdk>=1.24.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.24.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+# RAG support: ChromaDB vector store + embedding utilities
+rag = [
+    "chromadb>=0.5.0",
+    "openai>=1.0.0",   # used by OllamaEmbeddingFunction (OpenAI-compat API)
+]
+
+# Server support: FastAPI streaming backend
+server = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+]
+
+# LLM provider extras (install the ones you need)
+openai = ["openai>=1.0.0"]
+gemini = ["google-generativeai>=0.8.0"]
+claude = ["anthropic>=0.40.0"]
+ollama = ["openai>=1.0.0"]   # Ollama uses OpenAI-compat API
+
+# Evaluation extras
+evals = ["requests>=2.31.0"]
+
+# Everything
+all = [
+    "agent-core-sdk[rag,server,openai,gemini,claude,evals]",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-dir]
+"" = "src"
