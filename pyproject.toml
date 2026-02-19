@@ -25,6 +25,12 @@ rag = [
     "openai>=1.0.0",   # used by OllamaEmbeddingFunction (OpenAI-compat API)
 ]
 
+# Vespa vector store backend (large-scale, hybrid search)
+vespa = [
+    "pyvespa>=0.45.0",
+    "openai>=1.0.0",   # used by OllamaEmbeddingFunction (OpenAI-compat API)
+]
+
 # Server support: FastAPI streaming backend
 server = [
     "fastapi>=0.115.0",
@@ -42,7 +48,7 @@ evals = ["requests>=2.31.0"]
 
 # Everything
 all = [
-    "agent-core-sdk[rag,server,openai,gemini,claude,evals]",
+    "agent-core-sdk[rag,vespa,server,openai,gemini,claude,evals]",
 ]
 
 [tool.setuptools.packages.find]

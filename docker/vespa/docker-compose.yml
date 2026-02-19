@@ -1,0 +1,35 @@
+# Minimal Vespa standalone setup for local RAG development.
+# Ports:
+#   8080  — HTTP query / document feed API
+#   19071 — Config server REST API (required for schema deployment)
+#
+# Usage:
+#   docker compose up -d
+#   # Wait ~60s for Vespa to become ready, then deploy the schema:
+#   vespa deploy schemas/  --target http://localhost:19071
+
+version: "3.9"
+
+services:
+  vespa:
+    image: vespaengine/vespa:8
+    container_name: vespa-local
+    hostname: vespa-container
+    ports:
+      - "8080:8080"    # HTTP query / feed API
+      - "19071:19071"  # Config server REST API
+    volumes:
+      - vespa_data:/opt/vespa/var
+    environment:
+      VESPA_CONFIGSERVERS: "localhost"
+    healthcheck:
+      test: >
+        curl -sf http://localhost:19071/ApplicationStatus || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
+
+volumes:
+  vespa_data:
+    driver: local

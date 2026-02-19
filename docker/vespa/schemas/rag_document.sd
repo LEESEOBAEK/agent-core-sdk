@@ -1,0 +1,75 @@
+# rag_document.sd — Generic Vespa schema for RAG document storage.
+#
+# Fields:
+#   id        — unique string identifier (also stored as a field for retrieval)
+#   content   — full text body; BM25-indexed for keyword search
+#   metadata  — arbitrary JSON payload (stored as a plain string)
+#   embedding — dense float vector for ANN / hybrid search
+#
+# Embedding dimension default: 768 (nomic-embed-text via Ollama)
+# If your model produces a different dimension, replace every x[768] below.
+#
+# Ranking profiles:
+#   keyword  — pure BM25 over content
+#   semantic — approximate nearest-neighbour (closeness) over embedding
+#   hybrid   — weighted combination: 0.7 * semantic + 0.3 * keyword
+
+schema rag_document {
+
+    document rag_document {
+
+        field id type string {
+            indexing: summary | attribute
+        }
+
+        field content type string {
+            indexing: summary | index
+            index: enable-bm25
+        }
+
+        field metadata type string {
+            indexing: summary
+        }
+
+        field embedding type tensor<float>(x[768]) {
+            indexing: summary | attribute | index
+            attribute {
+                distance-metric: angular
+            }
+            index {
+                hnsw {
+                    max-links-per-node: 16
+                    neighbors-to-explore-at-insert: 200
+                }
+            }
+        }
+    }
+
+    fieldset default {
+        fields: content
+    }
+
+    # ── Keyword search ─────────────────────────────────────────────────
+    rank-profile keyword {
+        first-phase {
+            expression: bm25(content)
+        }
+    }
+
+    # ── Semantic (vector) search ────────────────────────────────────────
+    rank-profile semantic {
+        inputs {
+            query(embedding) tensor<float>(x[768])
+        }
+        first-phase {
+            expression: closeness(field, embedding)
+        }
+    }
+
+    # ── Hybrid search ───────────────────────────────────────────────────
+    rank-profile hybrid inherits semantic {
+        first-phase {
+            expression: 0.7 * closeness(field, embedding) + 0.3 * bm25(content)
+        }
+    }
+}
