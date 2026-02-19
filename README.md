@@ -41,6 +41,21 @@ pip install -e agent-core-sdk
 pip install -e agent-core-sdk[all]
 ```
 
+### Advanced RAG (Vespa)
+
+```bash
+# 1. Install Vespa dependencies
+pip install -e agent-core-sdk[vespa]
+
+# 2. Start Vespa engine
+cd docker/vespa
+docker compose up -d
+
+# 3. Use in code
+from agent_core.rag.infrastructure import create_store
+store = create_store("vespa")
+```
+
 ---
 
 ## 🚀 Quick Start
