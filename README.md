@@ -22,7 +22,7 @@ This SDK provides a professional, production-ready foundation for building AI ag
 
 ### 3. Modular RAG Infrastructure
 
-- **VectorStore Abstraction**: Clean interface for different backends (ChromaDB support built-in).
+- **VectorStore Abstraction**: Clean interface for different backends. **ChromaDB** is built-in, and the architecture is ready for production-grade engines like **Vespa**.
 - **Embedding Utilities**: Easy-to-use embedding functions for local and cloud models.
 
 ---
