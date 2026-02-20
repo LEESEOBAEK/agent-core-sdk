@@ -21,6 +21,18 @@ logger = logging.getLogger(__name__)
 
 Provider = Literal["openai", "gemini", "claude", "ollama"]
 
+# ── Optional SDK availability flags (checked once at import time) ───────────────
+try:
+    import google.generativeai  # noqa: F401 — presence check only
+    _GENAI_AVAILABLE = True
+except ImportError:
+    _GENAI_AVAILABLE = False
+    logger.warning(
+        "Gemini SDK not available. Gemini provider will fall back to Ollama. "
+        "Install with: pip install 'google-generativeai>=0.8.0,<2.0.0' "
+        "'google-ai-generativelanguage>=0.6.0,<0.7.0'"
+    )
+
 
 class LLMClient:
     """
@@ -32,6 +44,12 @@ class LLMClient:
         LLM provider: "openai" | "gemini" | "claude" | "ollama"
     model : str, optional
         Model name. None selects the provider default.
+    temperature : float
+        Sampling temperature (0 = deterministic, 2 = very creative). Default 0.7.
+    max_tokens : int
+        Maximum tokens in the model response. Default 2048.
+    top_p : float
+        Nucleus sampling probability mass. Default 1.0.
     """
 
     DEFAULT_MODELS = {
@@ -41,16 +59,41 @@ class LLMClient:
         "ollama": "qwen3:14b",
     }
 
-    def __init__(self, provider: Provider = "ollama", model: str = None):
+    def __init__(
+        self,
+        provider: Provider = "ollama",
+        model: str = None,
+        temperature: float = 0.7,
+        max_tokens: int = 2048,
+        top_p: float = 1.0
+    ):
         # Normalize provider name to lowercase
         self.provider = provider.lower() if provider else "ollama"
+
+        # Graceful fallback: if Gemini SDK is unavailable, switch to Ollama so
+        # the server keeps running instead of crashing at call time.
+        if self.provider == "gemini" and not _GENAI_AVAILABLE:
+            logger.warning(
+                "[LLMClient] Gemini SDK unavailable — falling back to Ollama/qwen3:14b. "
+                "Run: pip install 'google-generativeai>=0.8.0,<2.0.0'"
+            )
+            self.provider = "ollama"
+            # Explicitly clear the Gemini-specific model name so we use the Ollama default
+            model = None
+
         self.model = model or self.DEFAULT_MODELS.get(self.provider)
-        
+        self.temperature = temperature
+        self.max_tokens = max_tokens
+        self.top_p = top_p
+
         if not self.model:
             valid = ", ".join(self.DEFAULT_MODELS.keys())
             raise ValueError(f"Unknown provider '{provider}'. Valid options: {valid}")
-            
-        logger.info(f"[LLMClient] provider={self.provider}, model={self.model}")
+
+        logger.info(
+            f"[LLMClient] provider={self.provider}, model={self.model}, "
+            f"temp={temperature}, max_tokens={max_tokens}, top_p={top_p}"
+        )
 
     def chat(self, prompt: str, system: str = None) -> str:
         """
@@ -73,6 +116,10 @@ class LLMClient:
             span.set_attribute(LLM_PROVIDER, self.provider)
             span.set_attribute(LLM_MODEL, self.model)
             span.set_attribute(INPUT_VALUE, prompt)
+            span.set_attribute("llm.temperature", self.temperature)
+            span.set_attribute("llm.max_tokens", self.max_tokens)
+            span.set_attribute("llm.top_p", self.top_p)
+
             if system:
                 span.set_attribute("llm.system_prompt", system)
 
@@ -98,7 +145,7 @@ class LLMClient:
             except Exception as e:
                 span.record_exception(e)
                 span.set_status(StatusCode.ERROR, str(e))
-                logger.error(f"[{self.provider}] call failed: {e}")
+                logger.error(f"[LLMClient] {self.provider} error: {e}")
                 raise
 
     def _call_openai(self, prompt: str, system: str = None) -> str:
@@ -120,15 +167,22 @@ class LLMClient:
         response = client.chat.completions.create(
             model=self.model,
             messages=messages,
-            max_tokens=512,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            top_p=self.top_p,
         )
         return response.choices[0].message.content
 
     def _call_gemini(self, prompt: str, system: str = None) -> str:
-        try:
-            import google.generativeai as genai
-        except ImportError:
-            raise ImportError("pip install google-generativeai")
+        if not _GENAI_AVAILABLE:
+            # __init__ should have already redirected to Ollama, but guard here
+            # as a belt-and-suspenders safety net.
+            logger.warning(
+                "[LLMClient] _call_gemini reached without SDK — falling back to Ollama"
+            )
+            return self._call_ollama(prompt, system)
+
+        import google.generativeai as genai  # already imported at module level; this is a rebind
 
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
@@ -137,7 +191,13 @@ class LLMClient:
         genai.configure(api_key=api_key)
         full_prompt = f"{system}\n\n{prompt}" if system else prompt
         model = genai.GenerativeModel(self.model)
-        response = model.generate_content(full_prompt)
+
+        config = genai.types.GenerationConfig(
+            max_output_tokens=self.max_tokens,
+            temperature=self.temperature,
+            top_p=self.top_p,
+        )
+        response = model.generate_content(full_prompt, generation_config=config)
         return response.text
 
     def _call_claude(self, prompt: str, system: str = None) -> str:
@@ -153,8 +213,10 @@ class LLMClient:
         client = anthropic.Anthropic(api_key=api_key)
         kwargs = {
             "model": self.model,
-            "max_tokens": 512,
+            "max_tokens": self.max_tokens,
             "messages": [{"role": "user", "content": prompt}],
+            "temperature": self.temperature,
+            "top_p": self.top_p,
         }
         if system:
             kwargs["system"] = system
@@ -176,8 +238,15 @@ class LLMClient:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
 
+        logger.debug(
+            f"[LLMClient/Ollama] payload — model={self.model} "
+            f"temp={self.temperature} max_tokens={self.max_tokens} top_p={self.top_p}"
+        )
         response = client.chat.completions.create(
             model=self.model,
             messages=messages,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            top_p=self.top_p,
         )
         return response.choices[0].message.content
